@@ -1,0 +1,609 @@
+#!/bin/bash
+
+version="0.1.3b" # wird mit --version auf der console ausgegeben
+IFS=$'|' #internal field separator (IFS) variable
+GUI=zenity
+#GUI=yad
+
+HELP="Hilfe zu LVHA\n
+LVHA erlaubt das Verwalten von LVM2-Volumes.\n\n
+Hilfe zu LVM\n
+Physikalische Volumes
+Volume-Gruppen
+Logische Volumes
+Thin Pools/Volumes
+Dienstestatus
+Systeminformation"
+
+#Array mit Hauptmenüpunmkten
+kb=(  pv:"Physikalische Volumes anzeigen"
+      pve:"Physikalisches Volume erstellen"
+      vg:"Volume-Gruppen anzeigen"
+      vge:"Volume-Gruppe erstellen"
+      vgd:"Volume-Gruppe entfernen"
+      lv:"Logische Volumes anzeigen"
+      lve:"Logisches Volume erstellen"
+      lvd:"Logisches Volume entfernen"
+      tpe:"Thin Pool/Volume erstellen"
+      fse:"Dateisystem in LV anlegen"
+      dat:"Eingehänge Dateisysteme"
+      se:"Dienstestatus anzeigen"
+      si:"Systeminformation anzeigen"
+      he:"Hilfeseite aufrufen" )
+
+#Fensteroptionen für das Hauptmenü
+#unused here, used below
+zen_opts=( --width="600" --height="360"
+           --title="LVHA (using $GUI)"
+           --text="Wählen sie eine Option:"
+		   --window-icon="/home/mic/Devices-drive-harddisk-icon.png"
+           --print-column="3"
+           --radiolist --list
+           --hide-header
+           --column="" --column="" --column="")
+
+zen_he_opts=( --width="600" --height="400"
+			  --info --title "LVHA - Hilfe"
+			  --window-icon="/home/mic/Devices-drive-harddisk-icon.png"
+			  #--image="/home/mic/Devices-drive-harddisk-icon.png" #nur yad
+              --text "$HELP" )
+
+    case $GUI in
+        zenity) 
+		zen_si_opts=( --width="800" --height="500"
+           --title="LVHA - Systeminformation"
+           --text=""
+           --print-column="2"
+           --list 
+           --separator=":"
+           --hide-header
+           --column="" --column="");;
+        yad)
+		zen_si_opts=( --width="800" --height="500"
+           --title="LVHA - Systeminformation"
+           --text=""
+           --print-column="2"
+           --list 
+           --separator=":"
+           --hide-header
+           --column="" --column=""
+           --no-click );;
+        none) ;;
+    esac
+
+zen_se_opts=( --width="800" --height="500"
+           --title="LVHA - Dienstestatus"
+           --text=""
+           --print-column="1"
+           --list
+           --separator=":"
+           --hide-header
+           --column="")
+# --column="")
+
+zen_vg_opts=( --width="800" --height="500"
+           --title="LVHA - Volume-Gruppen"
+           --text=""
+           --print-column="2"
+           --list
+		   --separator="|"
+           --column="VG" --column="#PV" --column="#LV" --column="#SN" --column="Attr" --column="VSize" --column="VFree")
+                  
+zen_lv_opts=( --width="800" --height="500"
+           --title="LVHA - Logische Volumes"
+           --text=""
+           --print-column="2"
+           --list
+		   --separator="|"
+           --column="LV" --column="VG" --column="Attr" --column="LSize"
+		   --column="Pool" --column="Origin" --column="Data%" --column="Meta%"
+		   --column="Move" --column="Log" --column="Cpy%Sync" --column="Convert")
+# --column="Convert" ) zuvor weggenommen damit die Spaltenausrichtung beim parsen stimmt
+
+zen_pv_opts=( --width="800" --height="500"
+           --title="LVHA - Physikalische Volumes"
+           --text=""
+           --print-column="2"
+           --list
+           --separator="|"
+           --column="PV" --column="VG" --column="Fmt" --column="Attr" --column="PSize" --column="PFree")
+
+zen_dat_opts=( --width="800" --height="500"
+           --title="LVHA - Eingehänge Dateisysteme"
+           --text="" --center 
+           --print-column="1" --separator=""
+			--list --column="Device" --column="Size" --column="used" --column="free" --column="%" --column="Mount" 
+			--button=" Mount!add":2 --button=" Unmount!remove":3 --button=" Close!gtk-cancel":1 )
+
+zen_pve_opts=( --forms --title "LVHA - Physikalisches Volume erstellen"
+              --text "Mindestangaben"
+              #--add-entry "Name der VG"
+              --add-combo "Zu verwendendes PV" )
+
+zen_vge_opts=( --forms --title "LVHA - Volume-Gruppe erstellen"
+              --text "Mindestangaben" --add-entry "Name der VG" --add-combo "Zu verwendendes PV" )
+
+zen_lve_opts=( --forms --title "LVHA - Logisches Volume erstellen"
+              --text "Mindestangaben" --add-entry "Name des LV" --add-combo "Zu verwendende VG" )
+
+zen_tpe_opts=( --forms --title "LVHA - Thin Pool/Volume erstellen"
+              --text "Mindestangaben" --add-entry "Name des TP/TV" --add-combo "Zu verwendende VG" )
+
+zen_vgd_opts=( --forms --title "LVHA - Volume-Gruppe entfernen"
+              --text "Mindestangaben" --add-combo "Zu entfernende VG" )
+
+zen_lvd_opts=( --forms --title "LVHA - Logisches Volume entfernen"
+              --text "Mindestangaben" --add-combo "Zu entfernendes LV" )
+
+zen_fse_opts=( --forms --title "LVHA - Dateisystem in LV anlegen"
+              --text "Mindestangaben" --add-combo "Zu verwendendes LV" )
+
+#Versionsinfo auf der Console ausgeben, dann beenden
+if [[ $1 = "--version" ]]; then
+	echo "LVHA version $version"
+	echo "Copyright 2019 Michael John"
+	exit
+fi
+
+#Überprüfen ob der User root ist
+if (( $EUID != 0 )); then
+    echo "Please run as root"
+    $($GUI --error --width=200 --title "LVHA - Fehler" --text "Please run as root" 2> >(grep -v 'GtkDialog' >&2))
+    exit
+fi
+
+#Überprüfen ob zenity installiert ist
+#Später durch detect_gui() ersetzen
+if ! [ -x "$(command -v zenity)" ]; then
+  echo 'Error: zenity is not installed.' >&2
+  exit 1
+fi
+
+#echo "Debug: $1"
+
+while(true)
+do
+    case $GUI in
+        zenity) 
+		zen_opts=( --width="400" --height="400"
+           --title="LVHA (using $GUI)"
+           --text="Wählen sie eine Option:"
+           --print-column="3"
+           --radiolist --list
+           --hide-header
+           --column="" --column="" --column="");;
+        yad)
+		zen_opts=( --width="400" --height="380"
+           --title="LVHA (using $GUI)"
+           --text="Wählen sie eine Option:"
+           --print-column="3"
+           --radiolist --list
+           --hide-header --no-headers
+           --column="" --column="" --column=""
+           --center --tooltip-column=2
+           --no-click );;
+        none) ;;
+    esac
+
+#Hauptmenü aufbauen
+    for k in "${kb[@]}"
+    do
+        zen_opts+=( "" "${k#*:}" "${k%%:*}" )
+        #zen_opts+=( "" "${k%%:*}" "${k#*:}" )
+    done
+
+    if [[ $1 = "--debug" ]]; then
+		echo ${zen_opts[@]}
+    fi
+
+    HOSTCMD=""
+	if [[ $1 = "--host" ]]; then
+		HOSTCMD="rsh root@$2"
+		echo "Using hostname $2"
+    fi
+
+    ans=$( $GUI "${zen_opts[@]}" )
+    ans=${ans/%|/}
+    #zen_opts=''
+    echo "Menüantwort: ${ans}"
+    echo "Returncode: $?"
+
+    if [[ $? -eq 1 ]]; then
+        exit
+    fi
+
+    if [[ ${ans} = "" ]]; then
+        exit
+    fi
+
+#Ein paar Infos über LVM ausgeben
+    if [[ ${ans/%|/} = "si" ]]; then
+        lvm_version=$( lvm version | grep LVM | cut -d ":" -f 2 | sed -e 's/^[[:space:]]*//')
+        lib_version=$( lvm version | grep Library | cut -d ":" -f 2 | sed -e 's/^[[:space:]]*//')
+        dri_version=$( lvm version | grep Driver | cut -d ":" -f 2 | sed -e 's/^[[:space:]]*//')
+        system=$( uname -a )
+		if test -x "$(command -v sshpass 2>/dev/null)"; then
+			SSHPASS="installed"
+		else
+			SSHPASS="not installed"
+		fi
+		#if test -e "$XDG_CONFIG_HOME/lvha/lvharc"; then
+		if test -e "$HOME/.lvha/lvharc"; then
+			#CONF="$XDG_CONFIG_HOME/lvha/lvharc"
+			#echo $CONF
+			echo "Using $HOME/.lvha/lvharc"
+		else
+			mkdir "$HOME/.lvha"
+			touch "$HOME/.lvha/lvharc"
+			echo "Created $HOME/.lvha/lvharc"
+		fi
+        #echo ${zen_si_opts[@]}
+		#echo ${lvm_version}
+        ans1=$( $GUI "${zen_si_opts[@]}" \
+		"LVHA version" "$version Copyright 2019 Michael John. Licenced under the GNU General Public License, Version 3" \
+        "LVM version" "${lvm_version}" \
+        "Library version" "${lib_version}" \
+		"Driver version" "${dri_version}" \
+		"System" "${system}" \
+		"Kernel" "$(uname -r)" \
+		"Username (uid)" "$USER ($EUID) - sshpass is $SSHPASS" \
+		"uptime" "$( uptime | sed -e 's/^[[:space:]]*//')" \
+		"Remote-Login" "$( eval $HOSTCMD uptime | sed -e 's/^[[:space:]]*//')" \
+		"Dialogprogramm" "$GUI ($(which $GUI))" )
+		#"uptime" "$( sshpass -p 'fanta4' ssh -o StrictHostKeyChecking=no root@localhost uptime )"
+    fi
+
+#Ein paar Infos über Dienste ausgeben
+    if [[ ${ans/%|/} = "se" ]]; then
+        ans1=$( $GUI "${zen_si_opts[@]} --sep-value='\r'" \
+		"$(eval $HOSTCMD systemctl status lvm2* )" )
+		#"$(ssh $2 systemctl status lvm2*)" )
+#		"LVM services" \ # Spalte nicht verwendet
+    fi
+
+#Hilfeseite
+    if [[ ${ans} = "he" ]]; then
+        ans1=$( $GUI "${zen_he_opts[@]}" )
+    fi
+
+#Physikalische Volumes anzeigen
+    if [[ ${ans} = "pv" ]]; then
+        pvs=$($HOSTCMD pvs --separator "|" | tail -n +2 | sed 's/-/./g' | tr '\n' '|')
+        if [[ $1 = "--debug" ]]; then echo ${zen_pv_opts[@]}; fi
+        #echo ${zen_pv_opts[@]}
+        #echo ${pvs}
+        ans1=$( zenity "${zen_pv_opts[@]}" ${pvs} 2> >(grep -v 'GtkDialog' >&2) )
+    fi
+
+#Volume-Gruppen anzeigen
+    if [[ ${ans} = "vg" ]]; then
+        vgs=$( vgs --separator "|" | tail -n +2 | sed 's/-/./g' | tr '\n' '|')
+        if [[ $1 = "--debug" ]]; then echo ${zen_vg_opts[@]}; fi
+        #echo ${zen_vg_opts[@]}
+        #echo ${vgs}
+        ans1=$( zenity "${zen_vg_opts[@]}" ${vgs} 2> >(grep -v 'GtkDialog' >&2) )
+    fi
+
+#Logische Volumes anzeigen
+    if [[ ${ans} = "lv" ]]; then
+        lvs=$( lvs --separator "|" | tail -n +2 | sed 's/-/./g' | tr '\n' '|')
+        if [[ $1 = "--debug" ]]; then echo ${zen_lv_opts[@]}; fi
+        #echo ${zen_lv_opts[@]}
+		#echo ${lvs}
+        ans1=$( zenity "${zen_lv_opts[@]}" ${lvs} 2> >(grep -v 'GtkDialog' >&2) )
+    fi
+
+#Physikalisches Volume erstellen
+    if [[ ${ans} = "pve" ]]; then
+        #pvs=$( pvs --separator "|" | tail -n +2 | cut -d ' ' -f 3 )
+		pvs=$( cat /proc/mdstat | grep md | awk '{split($0,a,":"); printf "/dev/"a[1]}' ; printf "|"; sudo blkid | awk '{split($0,a,":"); print a[1]}' | tr '\n' '|' )
+        for p in "${pvs}"
+        do
+            pv+=("${p}" " " )
+		    #echo ${pv}
+        done
+
+        #echo ${zen_pv_opts[@]}
+        #echo ${pvs}
+        ans_pve=$( zenity "${zen_pve_opts[@]}" --combo-values "${pvs[@]}" 2> >(grep -v 'GtkDialog' >&2) )
+            #--combo-values "a|b|c|d|e")
+        rc=$?
+  		#echo "rc:${rc}-ans:${ans_lve}"
+		if [ $rc = 0 ]; then
+			if [[ $1 = "--debug" ]]; then echo ${ans_vge}; fi
+        	#vg1=$(echo $ans_vge | cut -f1 -d' ')
+        	pv1=$(echo $ans_pve | cut -f1 -d' ')
+		    cmd="pvcreate $pv1  &> /tmp/outfile"
+		    #echo ${vg1}
+		    #echo ${pv1}
+		    echo ${cmd}
+		    eval ${cmd}
+		    if [ $? = 0 ]; then
+		    	$( zenity --info --width=250 --text="$(cat /tmp/outfile)" )
+			else
+		    	$( zenity --warning --width=250 --text="$(cat /tmp/outfile)" )
+			fi
+		fi			
+    fi
+
+#Volume-Gruppe erstellen
+    if [[ ${ans} = "vge" ]]; then
+        #pvs=$( pvs --separator "|" | tail -n +2 | cut -d ' ' -f 3 )
+		pvs=$( pvs | tail -n +2 | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
+        for p in "${pvs}"
+        do
+            pv+=("${p}" " " )
+		    #echo ${pv}
+        done
+
+        #echo ${zen_pv_opts[@]}
+        #echo ${pvs}
+        ans_vge=$( zenity "${zen_vge_opts[@]}" --combo-values "${pvs[@]}" 2> >(grep -v 'GtkDialog' >&2) )
+            #--combo-values "a|b|c|d|e")
+        rc=$?
+  		#echo "rc:${rc}-ans:${ans_lve}"
+		if [ $rc = 0 ]; then
+			if [[ $1 = "--debug" ]]; then echo ${ans_vge}; fi
+        	vg1=$(echo $ans_vge | cut -f1 -d' ')
+        	pv1=$(echo $ans_vge | cut -f2 -d' ')
+		    cmd="vgcreate $vg1 $pv1  &> /tmp/outfile"
+		    #echo ${vg1}
+		    #echo ${pv1}
+		    #echo ${cmd}
+		    eval ${cmd}
+		    if [ $? = 0 ]; then
+		    	$( zenity --info --width=250 --text="$(cat /tmp/outfile)" )
+			else
+		    	$( zenity --warning --width=250 --text="$(cat /tmp/outfile)" )
+			fi
+		fi			
+    fi
+
+#Logisches Volume erstellen
+    if [[ ${ans} = "lve" ]]; then
+        vgs=$( vgs | tail -n +2 | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
+        #for v in "${vgs}"
+        #do
+            #vg+=("${v}" "|" )
+		    #echo ${vg}
+        #done
+
+        #echo ${zen_pv_opts[@]}
+        #echo ${vgs}
+        ans_lve=$( zenity "${zen_lve_opts[@]}" --combo-values "${vgs[@]}" \
+			--add-entry "Größe des LV" --add-combo "Size" --combo-values "MB|MiB|GB|GiB" )
+			#--
+			#2> >(grep -v 'GtkDialog' >&2) )
+            #--combo-values "a|b|c|d|e")
+        #echo ${ans_lve}
+		rc=$?
+  		#echo "rc:${rc}-ans:${ans_lve}"
+		if [ $rc = 0 ]; then
+		    #lv1=${ans_lve%|*}
+		    #vg1=${ans_lve##*|}
+		    lv1=$(echo $ans_lve | cut -f1 -d' ')
+		    vg1=$(echo $ans_lve | cut -f2 -d' ')
+		    size=$(echo $ans_lve | cut -f3 -d' ')
+		    unit=$(echo $ans_lve | cut -f4 -d' ')
+		    cmd="lvcreate --size $size$unit --name $lv1 $vg1 &> /tmp/outfile"
+		    #echo ${lv1}
+		    #echo ${vg1}
+		    #echo ${cmd}
+		    eval ${cmd}
+		    if [ $? = 0 ]; then
+		    	$( zenity --info --width=250 --text="$(cat /tmp/outfile)" )
+			else
+		    	$( zenity --warning --width=250 --text="$(cat /tmp/outfile)" )
+			fi	
+		fi		
+    fi
+
+#Thin Pool/Volume erstellen
+    if [[ ${ans} = "tpe" ]]; then
+        vgs=$( vgs | tail -n +2 | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
+        #for v in "${vgs}"
+        #do
+            #vg+=("${v}" "|" )
+		    #echo ${vg}
+        #done
+
+        #echo ${zen_pv_opts[@]}
+        #echo ${vgs}
+        ans_tpe=$( zenity "${zen_tpe_opts[@]}" --combo-values "${vgs[@]}" \
+			--add-entry "Größe des TP/TV" --add-combo "Size" --combo-values "MB|MiB|GB|GiB" )
+			#--
+			#2> >(grep -v 'GtkDialog' >&2) )
+            #--combo-values "a|b|c|d|e")
+        #echo ${ans_tpe}
+		rc=$?
+  		#echo "rc:${rc}-ans:${ans_tpe}"
+		if [ $rc = 0 ]; then
+		    #lv1=${ans_tpe%|*}
+		    #vg1=${ans_tpe##*|}
+		    lv1=$(echo $ans_tpe | cut -f1 -d' ')
+		    vg1=$(echo $ans_tpe | cut -f2 -d' ')
+		    size=$(echo $ans_tpe | cut -f3 -d' ')
+		    unit=$(echo $ans_tpe | cut -f4 -d' ')
+		    cmd="lvcreate --size $size$unit --thinpool $lv1 $vg1 &> /tmp/outfile"
+		    #echo ${lv1}
+		    #echo ${vg1}
+		    #echo ${cmd}
+		    eval ${cmd}
+		    if [ $? = 0 ]; then
+		    	$( zenity --info --width=250 --text="$(cat /tmp/outfile)" )
+			else
+		    	$( zenity --warning --width=250 --text="$(cat /tmp/outfile)" )
+			fi		
+		fi	
+    fi
+
+#Logisches Volume entfernen
+    if [[ ${ans} = "lvd" ]]; then
+        lvs=$( lvs | tail -n +2 | awk '{print $2"/"$1}' | tr '\n' '|' | sed 's/|$//')
+        #lvs=$( lvs | tail -n +2 | sed 's/-/./g')
+        #echo ${lvs}
+        #for v in "${lvs[@]}"
+        #do
+            #lv+=("${v}|")
+		    #echo "lv:${lv}"
+        #done
+
+        #echo ${zen_pv_opts[@]}
+        #echo ${vgs}
+        ans_lvd=$( zenity "${zen_lvd_opts[@]}" --combo-values "${lvs}" 2> >(grep -v 'GtkDialog' >&2) )
+            #--combo-values "a|b|c|d|e")
+	    cmd="lvremove $ans_lvd -y &> /tmp/outfile"
+        #echo ${ans_lvd}
+        #echo ${cmd}
+        eval ${cmd}
+		if [ $? = 0 ]; then
+        	$( zenity --info --width=450 --text="$(cat /tmp/outfile)" )
+		else
+        	$( zenity --warning --width=450 --text="$(cat /tmp/outfile)" )
+		fi
+    fi
+
+#Volume-Gruppe entfernen
+    if [[ ${ans} = "vgd" ]]; then
+        vgs=$(vgs | tail -n +2 | awk '{print $1}' | tr '\n' '|' | sed 's/|$//')
+        #lvs=$( lvs | tail -n +2 | sed 's/-/./g')
+        #echo ${vgs}
+        #for v in "${vgs[@]}"
+        #do
+            #vg+=("${v}|")
+		    #echo "vg:${vg}"
+        #done
+
+        #echo ${zen_vg_opts[@]}
+        #echo ${vgs}
+        ans_vgd=$( zenity "${zen_vgd_opts[@]}" --combo-values "${vgs}")
+			# 2> >(grep -v 'GtkDialog' >&2) )
+            #--combo-values "a|b|c|d|e")
+		rc=$?
+  		#echo "rc:${rc}-ans:${ans}"
+		if [ $rc = 0 ]; then
+			cmd="vgremove $ans_vgd -y &> /tmp/outfile"
+		    #echo ${ans_vgd}
+		    #echo ${cmd}
+		    eval ${cmd}
+			if [ $? = 0 ]; then
+		    	$( zenity --info --width=450 --text="$(cat /tmp/outfile)" )
+			else
+		    	$( zenity --warning --width=450 --text="$(cat /tmp/outfile)" )
+			fi
+		fi
+    fi
+
+#Dateisystem in LV anlegen
+    if [[ ${ans} = "fse" ]]; then
+        lvs=$( lvs | tail -n +2 | awk '{print $2"/"$1}' | tr '\n' '|' | sed 's/|$//')
+        #lvs=$( lvs | tail -n +2 | sed 's/-/./g')
+        #echo ${lvs}
+        #for v in "${lvs[@]}"
+        #do
+            #lv+=("${v}|")
+		    #echo "lv:${lv}"
+        #done
+		$( modprobe -a xfs jfs ufs btrfs reiser4 reiserfs hpfs minix &> /tmp/outfile )
+        #echo ${zen_pv_opts[@]}
+        #echo ${vgs}
+		cmd="$(cat /proc/filesystems | grep -v nodev | awk '{print $1}' | tr '\n' '|')reiser4"
+        ans_fse=$( zenity "${zen_fse_opts[@]}" --combo-values "${lvs}" \
+			--add-combo "Dateisystem" \
+			--combo-values "$cmd" \
+			--add-combo "Optionen" \
+			--combo-values "|-f|-y|-v" )
+			#--ok-label="B" \
+			#--cancel-label="A" \
+			# --combo-values "ext2|ext3|ext4" \
+			#2> >(grep -v 'GtkDialog' >&2) )
+            #--combo-values "a|b|c|d|e")
+		#TODO: Cancel abfangen (BUG?)
+		rc=$?
+  		#echo "rc:${rc}-ans:${ans}"
+		if [ $rc = 0 ]; then
+			volume=$(echo $ans_fse | cut -f1 -d' ')
+			fstype=$(echo $ans_fse | cut -f2 -d' ')
+			option=$(echo $ans_fse | cut -f3 -d' ')
+			#cmd="mkfs -t $fstype /dev/$volume &> /tmp/outfile"
+			cmd="mkfs.$fstype $option /dev/$volume &> /tmp/outfile"
+		    #echo ${ans_fse}
+		    echo "Kommando: ${cmd}"
+		    eval ${cmd}
+			if [ $? = 0 ]; then
+		    	$( zenity --info --width=450 --text="$(cat /tmp/outfile | tr -d '\b')" )
+			else
+		    	$( zenity --warning --width=450 --text="$(cat /tmp/outfile)" )
+			fi
+		fi
+    fi
+    
+#Eingehänge Dateisysteme
+    if [[ ${ans} = "dat" ]]; then
+        dat=$(df |grep -e '^/dev/' )
+        if [[ $1 = "--debug" ]]; then echo ${zen_dat_opts[@]}; fi
+        for d in "$dat"
+        do
+            dv+=("${d} ")
+		    #echo "dv"
+        done
+        #echo ${zen_pv_opts[@]}
+        #echo ${pvs}
+        unset IFS
+        volume=$( yad "${zen_dat_opts[@]}" ${dv} 2> >(grep -v 'GtkDialog' >&2) )
+        IFS=$'|'
+        echo "Volume: $volume"
+        echo "return:$?"
+        if [ $? = 0 ]; then
+		    	mp=$( yad --form --width=650 --title="Mountpoint auswählen" --text="Wählen sie ein LVM-Volume und einen Mountpoint" --field="Volume" "$volume" --field="Mountpoint":DIR )
+		    	echo "Volume: ${mp:0:1}"
+		    	echo "Mountpoint: ${mp:1:2}"
+		    	x=$(echo $mp | awk -F '[|]' '{print $1}')
+		    	echo "vol $x"
+		    	eval ${ mount $x }
+			else
+		    	$( yad --warning --width=450 --text="Nichts gemacht." )
+			fi
+    fi
+
+done
+
+#sudo file -sL /dev/vg1/lv7_256m
+#sudo blkid -o value -s TYPE /dev/vg1/lv7_256m
+
+#TODO
+#maybe use yad instead of zenity, or kdialog or 
+
+# For temp files before $WINEPREFIX is available:
+#if [ -x "$(command -v mktemp 2>/dev/null)" ] ; then
+#    W_TMP_EARLY="$(mktemp -d "${TMPDIR:-/tmp}/winetricks.XXXXXXXX")"
+#elif [ -w "$TMPDIR" ] ; then
+#    W_TMP_EARLY="$TMPDIR"
+#else
+#    W_TMP_EARLY="/tmp"
+#fi
+
+# stolen from winetricks
+detect_gui()
+{
+    if test -x "$(command -v zenity 2>/dev/null)"; then
+        GUI=zenity
+        GUI_VERSION="$(zenity --version)"
+        MENU_HEIGHT=500
+        MENU_WIDTH=1010
+    elif test -x "$(command -v kdialog 2>/dev/null)"; then
+        echo "Zenity not found!  Using kdialog as poor substitute."
+        GUI=kdialog
+        GUI_VERSION="$(kdialog --version)"
+    else
+        echo "No arguments given, so tried to start GUI, but zenity not found."
+        echo "Please install zenity if you want a graphical interface, or "
+        echo "run with --help for more options."
+        exit 1
+    fi
+
+    # Print zenity/dialog version info for debugging:
+    if [ -z "$SUPER_QUIET" ] ; then
+       echo "winetricks GUI enabled, using $GUI $GUI_VERSION"
+    fi
+}

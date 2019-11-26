@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=LVHA
+Comment=Grafische Oberfläche zur Verwaltung von LVM
+Exec=pkexec /home/mic/lvha
+Icon=/home/mic/Devices-drive-harddisk-icon.png
+Path=
+Terminal=false
+StartupNotify=false
